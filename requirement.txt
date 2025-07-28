@@ -3,3 +3,4 @@ json
 os
 gspread
 gspread-dataframe
+pandas
