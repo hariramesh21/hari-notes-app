@@ -1,3 +1,5 @@
 streamlit
 json
 os
+gspread
+gspread-dataframe
