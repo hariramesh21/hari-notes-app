@@ -1,29 +1,43 @@
 import streamlit as st
-import json
-import os
+import gspread
+import pandas as pd
+from gspread_dataframe import get_as_dataframe, set_with_dataframe
+import time
 
-# Define the file path for saving notes
-NOTES_FILE = "notes.json"
+# --- Google Sheets Setup ---
+try:
+    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    sh = gc.open("Streamlit_Notes_App") # Use the name of your Google Sheet
+except Exception as e:
+    st.error(f"Failed to connect to Google Sheets: {e}")
+    st.stop()
 
-# --- Functions for file operations ---
+worksheet = sh.get_worksheet(0) # Assuming notes are in the first sheet
+
+# --- Functions for Google Sheets operations ---
 
 def load_notes():
-    """Loads notes from a JSON file."""
-    if os.path.exists(NOTES_FILE):
-        with open(NOTES_FILE, "r") as f:
-            return json.load(f)
-    return {}
+    """Loads notes from the Google Sheet."""
+    df = get_as_dataframe(worksheet)
+    if df.empty or 'title' not in df.columns:
+        return {}
+    # Convert DataFrame to a dictionary
+    notes = {}
+    for index, row in df.iterrows():
+        notes[row['title']] = row['content']
+    return notes
 
 def save_notes(notes):
-    """Saves notes to a JSON file."""
-    with open(NOTES_FILE, "w") as f:
-        json.dump(notes, f, indent=4)
+    """Saves notes to the Google Sheet."""
+    df = pd.DataFrame(notes.items(), columns=['title', 'content'])
+    # Clear and rewrite the entire sheet to simplify updates and deletes
+    worksheet.clear()
+    set_with_dataframe(worksheet, df)
 
 # --- Streamlit app setup ---
 
 st.title("My Permanent Notes App")
 
-# Load notes on first run and store in session state
 if "notes" not in st.session_state:
     st.session_state.notes = load_notes()
 if "current_note_key" not in st.session_state:
@@ -35,12 +49,11 @@ if "current_note_content" not in st.session_state:
 
 st.sidebar.header("Notes List")
 
-# Create a "New Note" button
 if st.sidebar.button("➕ New Note"):
-    st.session_state.current_note_key = f"Untitled Note {len(st.session_state.notes) + 1}"
+    timestamp = int(time.time())
+    st.session_state.current_note_key = f"Untitled Note ({timestamp})"
     st.session_state.current_note_content = ""
 
-# Display the list of notes
 note_keys = list(st.session_state.notes.keys())
 for key in note_keys:
     if st.sidebar.button(key, key=f"select_{key}"):
@@ -52,39 +65,30 @@ for key in note_keys:
 if st.session_state.current_note_key:
     st.header(f"Editing: {st.session_state.current_note_key}")
 
-    # Text input for the note title
     new_title = st.text_input("Note Title", st.session_state.current_note_key)
-
-    # Text area for the note content
-    new_content = st.text_area(
-        "Note Content",
-        st.session_state.current_note_content,
-        height=300
-    )
+    new_content = st.text_area("Note Content", st.session_state.current_note_content, height=300)
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
         if st.button("💾 Save Note"):
-            # Update the note and save to file
+            # If title changed, update the key
             if new_title != st.session_state.current_note_key:
-                # If title changed, create a new entry and delete the old one
-                del st.session_state.notes[st.session_state.current_note_key]
+                if st.session_state.current_note_key in st.session_state.notes:
+                    del st.session_state.notes[st.session_state.current_note_key]
                 st.session_state.current_note_key = new_title
 
             st.session_state.notes[st.session_state.current_note_key] = new_content
             save_notes(st.session_state.notes)
-            st.success(f"Note '{st.session_state.current_note_key}' saved!")
+            st.success(f"Note '{st.session_state.current_note_key}' saved to Google Sheets!")
 
     with col2:
         if st.button("🗑️ Delete Note"):
-            # Delete the note and save to file
             if st.session_state.current_note_key in st.session_state.notes:
                 del st.session_state.notes[st.session_state.current_note_key]
                 save_notes(st.session_state.notes)
-                st.session_state.current_note_key = "" # Clear the current note view
+                st.session_state.current_note_key = ""
                 st.session_state.current_note_content = ""
                 st.success("Note deleted!")
-    
 else:
     st.info("Select a note from the sidebar or click 'New Note' to get started.")
